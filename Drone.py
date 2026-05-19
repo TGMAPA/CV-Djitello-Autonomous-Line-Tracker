@@ -25,6 +25,9 @@ class Drone:
     def kill(self):
         self.tello.streamoff()
 
+    def takeoff(self):
+        self.tello.takeoff()
+
     def send_control(
             self, 
             yaw_command,
@@ -44,7 +47,7 @@ class Drone:
         cv2.putText(
             frame,
             f"FwdSpeed: {self.forward_speed:.3f}",
-            (40, 60),
+            (20, 60),
             cv2.FONT_HERSHEY_SIMPLEX,
             1,
             (50,255,50),
@@ -54,7 +57,7 @@ class Drone:
         cv2.putText(
             frame,
             f"Yaw: {self.yaw:.3f}",
-            (40, 80),
+            (20, 100),
             cv2.FONT_HERSHEY_SIMPLEX,
             1,
             (50,255,50),

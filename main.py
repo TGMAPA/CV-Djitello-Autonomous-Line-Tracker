@@ -188,16 +188,26 @@ def main():
     detector = Detector()
 
     # Iniciar Dron
-    drone = None
-    #drone = Drone(streamon=True)
+    #drone = None
+    drone = Drone(streamon=True)
+
+    # Despegar el dron
+    drone.takeoff()
+
+    drone.send_control(
+                0,
+                0,      # left-right
+                0,     # forward
+                -20      # up-down     
+            )
+
 
     # PID controlador
     yaw_pid = PID(
-        kp=0.12,
+        kp=0.25,
         ki=0.0,
-        kd=0.04
+        kd=0.0
     )
-
     # Error filtrado
     filtered_error = 0
 
@@ -219,7 +229,7 @@ def main():
         else:
             # Leer frame de drone
             frame = drone.getFrame()
-            
+   
         
         # --- Test pitch and contrast
         #frame = increasePitch(frame, pitch=FRAME_COLOR_PITCH)
@@ -229,30 +239,38 @@ def main():
         frame = cv2.resize(frame, FRAME_SIZE)        
 
         # Analyze image
-        frames, error = detector.analyze(frame)
+        frames, error, slope = detector.analyze(frame)
 
         # Atualizar comando con el error detectado
         if error is not None:
-            forward_speed = 20
+            forward_speed = int(
+                np.clip(
+                    20 - abs(filtered_error) * 0.08,
+                    5,
+                    20
+                )
+            )
 
             # Filtrar error
-            alpha = 0.2
+            alpha = 0.5
 
             filtered_error = (
                 alpha * error
                 + (1 - alpha) * filtered_error
             )
 
-            yaw_command = yaw_pid.update(
-                filtered_error
-            )
+            yaw_position = filtered_error * 0.18
+
+            yaw_angle = slope * 12
+
+            yaw_command = yaw_position + yaw_angle
 
             # Aplicar un clip al comando para evitar movimientos agresivos
             yaw_command = int(
                 np.clip(
                     yaw_command,
-                    -30,
-                    30
+                    -40,
+                    40
                 )
             )
 
@@ -262,12 +280,16 @@ def main():
 
         # Enviar comando de control al dron
         if drone is not None:
+            print(f"--- Control: | Yaw: {yaw_command} | Fwd: {forward_speed}")
+
             drone.send_control(
                 yaw_command,
                 0,      # left-right
                 forward_speed,     # forward
                 0      # up-down     
             )
+
+        drone.display_parameters(frames["Line Detection"])
 
         # Mostrar ventanas
         dashboard = create_debug_dashboard(

@@ -2,13 +2,6 @@ import cv2
 import numpy as np
 
 
-from scipy.interpolate import UnivariateSpline
-from sklearn.linear_model import RANSACRegressor
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.pipeline import make_pipeline
-from sklearn.linear_model import LinearRegression
-
-
 class Detector:
     def __init__(self):
         self.annotated_frame = None
@@ -19,10 +12,10 @@ class Detector:
 
         # Canny limits
         self.canny_low = 20
-        self.canny_high = 55  
+        self.canny_high = 75  
 
         # Blur kernel
-        self.blur_kernel = (5,5)
+        self.blur_kernel = (7,7)
 
         # ROI Y Proportiuon
         self.roi_y_proportion = 0.4
@@ -184,20 +177,26 @@ class Detector:
                 # MOMENTUM / PREDICCIÓN
                 self.previous_centers.append(new_center)
 
-                if len(self.previous_centers) > 2:
+                if len(self.previous_centers) > 5:
+                    self.previous_centers.pop(0)
 
-                    dx = (
-                        self.previous_centers[-1]
-                        - self.previous_centers[-2]
-                    )
+                # if len(self.previous_centers) > 2:
 
-                    # Limitar cambios bruscos
-                    dx = np.clip(dx, -50, 50)
+                #     dx = (
+                #         self.previous_centers[-1]
+                #         - self.previous_centers[-2]
+                #     )
 
-                    current_x = new_center + dx
+                #     # Limitar cambios bruscos
+                #     dx = np.clip(dx, -50, 50)
 
-                else:
-                    current_x = new_center
+                #     current_x = new_center + dx
+                #     current_x = new_center + dx
+
+                # else:
+                #     current_x = new_center
+                
+                current_x = new_center
 
         # Unir todos los puntos 
         if len(lane_inds) == 0:
@@ -369,7 +368,7 @@ class Detector:
 
             lateral_error = (
                 line_x - camera_center
-            ) / camera_center
+            )
 
             # Dibujar error lateral con respeceto al centro de la camara
             self.drawError( lateral_error, plot_x, plot_y, camera_center)
@@ -422,6 +421,7 @@ class Detector:
                 "Edges": frame_edges,
                 "Line Detection": self.annotated_frame
             },
-            lateral_error
+            lateral_error,
+            slope
         )
 
