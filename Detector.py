@@ -1,6 +1,14 @@
 import cv2
 import numpy as np
 
+
+from scipy.interpolate import UnivariateSpline
+from sklearn.linear_model import RANSACRegressor
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.pipeline import make_pipeline
+from sklearn.linear_model import LinearRegression
+
+
 class Detector:
     def __init__(self):
         self.annotated_frame = None
@@ -10,17 +18,21 @@ class Detector:
         self.frame_width = None
 
         # Canny limits
-        self.canny_low = 60
-        self.canny_high = 150
+        self.canny_low = 20
+        self.canny_high = 55  
 
         # Blur kernel
-        self.blur_kernel = (11,11)
+        self.blur_kernel = (5,5)
 
         # ROI Y Proportiuon
-        self.roi_y_proportion = 0.5
+        self.roi_y_proportion = 0.4
 
         # Dilate kernel
-        self.dilate_kernel = (5,5)
+        self.dilate_kernel = (3,3)
+
+        self.smoothed_curve = None
+
+        self.previous_centers = []
 
     # Crear ROI (Region of interest)
     def createROI(self, frame):
@@ -79,8 +91,8 @@ class Detector:
     def slidingWindows(
             self, 
             frame_edges,
-            nwindows = 8, 
-            margin = 60, 
+            nwindows = 6, 
+            margin = 100, 
             minpix = 50
         ):
         
@@ -93,17 +105,6 @@ class Detector:
         # Coordenadas X
         nonzero_x = np.array(nonzero[1])
 
-        for i in range(len(nonzero_x)):
-            px = nonzero_x[i]
-            py = nonzero_y[i] + self.roi_y
-
-            cv2.circle(
-                self.annotated_frame,
-                (px, py),
-                1,
-                (0,255,0),
-                -1
-            )
 
         # Crear histograma de puntos
         histogram = np.sum(
@@ -173,11 +174,30 @@ class Detector:
 
             # Recentrar ventana
             if len(good_inds) > minpix:
-                current_x = int(
+
+                new_center = int(
                     np.mean(
                         nonzero_x[good_inds]
                     )
                 )
+
+                # MOMENTUM / PREDICCIÓN
+                self.previous_centers.append(new_center)
+
+                if len(self.previous_centers) > 2:
+
+                    dx = (
+                        self.previous_centers[-1]
+                        - self.previous_centers[-2]
+                    )
+
+                    # Limitar cambios bruscos
+                    dx = np.clip(dx, -50, 50)
+
+                    current_x = new_center + dx
+
+                else:
+                    current_x = new_center
 
         # Unir todos los puntos 
         if len(lane_inds) == 0:
@@ -203,21 +223,107 @@ class Detector:
             )
 
         return lane_y, lane_x
-    
-    def polynomialFitting(self, lane_y, lane_x, frame_edges):
+  
+    def drawError(self, lateral_error, plot_x, plot_y, camera_center):
+        # VISUALIZAR ERROR LATERAL
+
+        # Punto inferior de la trayectoria
+        target_x = int(plot_x[-1])
+        target_y = int(plot_y[-1] + self.roi_y)
+
+        # Centro de cámara
+        camera_x = int(camera_center)
+        camera_y = target_y
+
+        # Dibujar centro cámara
+        cv2.circle(
+            self.annotated_frame,
+            (camera_x, camera_y),
+            8,
+            (255, 255, 0),
+            -1
+        )
+
+        # Dibujar punto objetivo
+        cv2.circle(
+            self.annotated_frame,
+            (target_x, target_y),
+            8,
+            (0, 0, 255),
+            -1
+        )
+
+        # Dibujar línea de error
+        cv2.line(
+            self.annotated_frame,
+            (camera_x, camera_y),
+            (target_x, target_y),
+            (0, 0, 255),
+            3
+        )
+
+        # TEXTO ERROR
+        cv2.putText(
+            self.annotated_frame,
+            f"Error: {lateral_error:.3f}",
+            (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1,
+            (50,50,255),
+            2
+        )
+
+    def polynomialFitting(
+            self,
+            lane_y,
+            lane_x
+        ):
+
+        if lane_x is None or len(lane_x) < 80:
+            return None, None, None, None
+
         try:
-            # Ajustar curva
+
+            # ELIMINAR OUTLIERS SIMPLES
+            median_x = np.median(lane_x)
+
+            mask = np.abs(
+                lane_x - median_x
+            ) < 250
+
+            lane_x = lane_x[mask]
+            lane_y = lane_y[mask]
+
+            if len(lane_x) < 50:
+                return None, None, None, None
+
+            # POLYFIT SIMPLE
             curve = np.polyfit(
                 lane_y,
                 lane_x,
                 2
             )
 
-            # Generar puntos de la curva
+            # SUAVIZADO TEMPORAL
+            alpha = 0.2
+
+            if self.smoothed_curve is None:
+                self.smoothed_curve = curve
+
+            else:
+                self.smoothed_curve = (
+                    alpha * curve
+                    + (1 - alpha)
+                    * self.smoothed_curve
+                )
+
+            curve = self.smoothed_curve
+
+            # GENERAR CURVA
             plot_y = np.linspace(
-                0,
-                frame_edges.shape[0] - 1,
-                frame_edges.shape[0]
+                lane_y.min(),
+                lane_y.max(),
+                80
             )
 
             plot_x = (
@@ -226,42 +332,58 @@ class Detector:
                 + curve[2]
             )
 
-            for i in range(len(plot_y) - 1):
-                x1 = int(plot_x[i])
-                y1 = int(plot_y[i]) + self.roi_y
-
-                x2 = int(plot_x[i + 1])
-                y2 = int(plot_y[i + 1]) + self.roi_y
-
-                cv2.line(
-                    self.annotated_frame,
-                    (x1, y1),
-                    (x2, y2),
-                    (0,255,255),
-                    3
+            # DIBUJAR
+            points = np.array([
+                np.transpose(
+                    np.vstack([
+                        plot_x,
+                        plot_y + self.roi_y
+                    ])
                 )
+            ]).astype(np.int32)
 
-            # Obtener dirección del camino 
-            y_eval = frame_edges.shape[0]
+            cv2.polylines(
+                self.annotated_frame,
+                points,
+                False,
+                (0,255,255),
+                3
+            )
+
+            # DIRECCIÓN
+            y_eval = plot_y[-1]
 
             slope = (
                 2 * curve[0] * y_eval
                 + curve[1]
             )
 
-            # Curvatura real
             curvature = abs(
                 2 * curve[0]
             )
 
-            if lane_x is None or len(lane_x) < 50:
-                return
+            # Calcular error lateral
+            line_x = plot_x[-1]
+
+            camera_center = self.frame_width // 2
+
+            lateral_error = (
+                line_x - camera_center
+            ) / camera_center
+
+            # Dibujar error lateral con respeceto al centro de la camara
+            self.drawError( lateral_error, plot_x, plot_y, camera_center)
             
+            return (
+                curve,
+                slope,
+                curvature,
+                lateral_error
+            )
+
         except Exception as e:
-            print("Warning: ", e)
-            return 0,0,0
-        
-        return curve, slope, curvature
+            print("Warning:", e)
+            return None, None, None, None
 
     def analyze(self, frame):
         self.frame_height = frame.shape[0]
@@ -281,9 +403,9 @@ class Detector:
         # Crear sliding windows
         lane_y, lane_x = self.slidingWindows(frame_edges)
 
-        # Ajustar curva
-        curve, slope, curvature = self.polynomialFitting(lane_y, lane_x, frame_edges)
-
+        # Ajustar curva y obtener error lateral
+        curve, slope, curvature, lateral_error = self.polynomialFitting(lane_y, lane_x)
+        
         # Obtener Centro de Cámara
         center_x = self.frame_width // 2
         cv2.line(
@@ -294,8 +416,12 @@ class Detector:
             2
         )
 
-        return {
-            "Edges": frame_edges,
-            "Line Detection": self.annotated_frame
-        }
+        return (
+            {
+                "Preprocessed Frame": frame_preprocessed,
+                "Edges": frame_edges,
+                "Line Detection": self.annotated_frame
+            },
+            lateral_error
+        )
 
