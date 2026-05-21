@@ -1,9 +1,9 @@
 from Detector import Detector
 from Drone import Drone
-from PID import PID
 
 import cv2, math
 import numpy as np
+import time
 
 # === Constantes de Configuración ===
 FRAME_SIZE = (640, 360)
@@ -192,27 +192,35 @@ def main():
     drone = Drone(streamon=True)
 
     # Despegar el dron
+    print("[Drone] taking off...")
     drone.takeoff()
 
-    drone.send_control(
-                0,
-                0,      # left-right
-                0,     # forward
-                -20      # up-down     
-            )
+    print("[Drone] IMU STAB...")
+    time.sleep(1)  # dejar estabilizar IMU
 
+    move_up = False
+    if move_up:
+        print("[Drone] Moving up...")
+        # subir usando RC control
+        drone.tello.send_rc_control(0,0,65,0)
 
-    # PID controlador
-    yaw_pid = PID(
-        kp=0.25,
-        ki=0.0,
-        kd=0.0
-    )
+        time.sleep(2)
+
+        print("[Drone] Stopping 'move_up'...")
+        # detener movimiento vertical
+        drone.send_control(0, 0, 0, 0)
+
     # Error filtrado
     filtered_error = 0
 
     # Velocidad de avance
     forward_speed = 0
+
+    previous_yaw = 0
+
+    filtered_slope = 0
+
+    print("[Drone] Starting analysis...")
 
     # Loop Principal
     while True:
@@ -243,25 +251,56 @@ def main():
 
         # Atualizar comando con el error detectado
         if error is not None:
-            forward_speed = int(
-                np.clip(
-                    20 - abs(filtered_error) * 0.08,
-                    5,
-                    20
-                )
-            )
-
             # Filtrar error
-            alpha = 0.5
+            alpha = 0.4
 
             filtered_error = (
                 alpha * error
                 + (1 - alpha) * filtered_error
             )
 
-            yaw_position = filtered_error * 0.18
+            if abs(filtered_error) < 2:
+                filtered_error = 0
+            
 
-            yaw_angle = slope * 12
+            yaw_position = filtered_error * 0.28
+
+            angle_error = np.degrees(np.arctan(slope))
+
+            angle_error = np.clip(
+                angle_error,
+                -25,
+                25
+            )
+
+            yaw_angle = angle_error * 0.5
+            # SOlo rotar
+            if abs(angle_error) > 15:
+                forward_speed = 0
+
+            # Error combinado
+            combined_error = (
+                abs(filtered_error)
+                + abs(angle_error) * 1.5
+            )
+
+            # COntrolar velocidad forward 
+            if combined_error < 10:
+                forward_speed = 10
+
+            elif combined_error < 20:
+                forward_speed = 6
+
+            elif combined_error < 30:
+                forward_speed = 3
+
+            else:
+                forward_speed = 0
+
+            
+            # YAW
+            yaw_position = filtered_error * 0.12
+            yaw_angle = angle_error * 0.35
 
             yaw_command = yaw_position + yaw_angle
 
@@ -269,24 +308,35 @@ def main():
             yaw_command = int(
                 np.clip(
                     yaw_command,
-                    -40,
-                    40
+                    -25,
+                    25
                 )
             )
+            if abs(yaw_command) < 4:
+                yaw_command = 0
+
+            # SUAVIZADO DE YAW
+            yaw_command = (
+                0.15 * previous_yaw
+                + 0.85 * yaw_command
+            )
+            previous_yaw = yaw_command
+
+            yaw_command = int(yaw_command)
+
 
         else:
             forward_speed = 0
             yaw_command = 0
+            left_right_command = 0
 
         # Enviar comando de control al dron
         if drone is not None:
-            print(f"--- Control: | Yaw: {yaw_command} | Fwd: {forward_speed}")
-
             drone.send_control(
-                yaw_command,
-                0,      # left-right
+                left_right_command,      # left-right
                 forward_speed,     # forward
-                0      # up-down     
+                0,      # up-down,
+                yaw_command, #yaw   
             )
 
         drone.display_parameters(frames["Line Detection"])
@@ -308,7 +358,7 @@ def main():
     
 
     # Liberar recursos
-    if drone is None:
+    if drone is None:   
         cap.release()
     else:
         drone.kill()

@@ -2,6 +2,8 @@ from Drone import Drone
 import cv2
 
 drone = Drone(streamon=True)
+drone.takeoff()
+drone.tello.move_up(20)
 
 # Loop Principal
 while True:

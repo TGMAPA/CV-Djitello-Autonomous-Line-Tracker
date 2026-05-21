@@ -362,13 +362,15 @@ class Detector:
             )
 
             # Calcular error lateral
-            line_x = plot_x[-1]
+            target_idx = int(len(plot_x) * 0.9)
+
+            line_x = plot_x[target_idx]
 
             camera_center = self.frame_width // 2
 
             lateral_error = (
                 line_x - camera_center
-            )
+            )   
 
             # Dibujar error lateral con respeceto al centro de la camara
             self.drawError( lateral_error, plot_x, plot_y, camera_center)

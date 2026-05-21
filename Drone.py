@@ -30,10 +30,7 @@ class Drone:
 
     def send_control(
             self, 
-            yaw_command,
-            left_right = 0,   # left-right
-            forward = 20,     # forward
-            up_down = 0      # up-down
+            left_right, forward, up_down, yaw_command
         ):
         self.tello.send_rc_control(left_right, forward, up_down, yaw_command)
 
